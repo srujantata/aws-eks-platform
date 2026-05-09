@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars and fill in values (terraform.tfvars is gitignored)
+primary_region = "us-east-1"
+dr_region      = "us-west-2"
+github_org     = "srujantata"   # your GitHub username or org

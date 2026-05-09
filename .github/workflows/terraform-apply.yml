@@ -1,0 +1,58 @@
+name: Terraform Apply
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'terraform/**'
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TF_VERSION: "1.8.5"
+  AWS_REGION: "us-east-1"
+
+jobs:
+  apply:
+    name: Terraform Apply — ${{ matrix.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ matrix.environment }}   # Requires environment approval in GitHub Settings
+
+    strategy:
+      matrix:
+        environment: [dev]   # Only auto-apply dev; staging/prod gated by environment approval
+      fail-fast: false
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/GitHubActionsRole
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: |
+          terraform init \
+            -backend-config="bucket=${{ secrets.TF_STATE_BUCKET }}" \
+            -backend-config="key=${{ matrix.environment }}/terraform.tfstate" \
+            -backend-config="region=${{ env.AWS_REGION }}" \
+            -backend-config="dynamodb_table=terraform-lock"
+
+      - name: Terraform Apply
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: terraform apply -auto-approve
+
+      - name: Output Summary
+        working-directory: terraform/environments/${{ matrix.environment }}
+        run: terraform output -json >> $GITHUB_STEP_SUMMARY
