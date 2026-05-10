@@ -4,44 +4,73 @@
 ![EKS](https://img.shields.io/badge/EKS-1.30-FF9900?logo=amazon-aws)
 ![License](https://img.shields.io/badge/license-MIT-blue)
 
-Production-grade EKS cluster for a DevOps toolchain — deployed via Terraform, GitOps-managed by ArgoCD. Multi-AZ HA with active-passive DR across `us-east-1` (primary) and `us-west-2` (standby).
+Production-grade EKS cluster for a DevOps toolchain — deployed via Terraform, GitOps-managed by ArgoCD. Documented with both POC (cost-minimal) and Production (HA + active-passive DR) configurations.
 
-## Architecture
+## Configurations
+
+| | POC | Production |
+|--|-----|------------|
+| **Purpose** | Skill demo, ~2 weeks | Long-running, HA |
+| **AZs** | 1 (us-east-1a) | 3 (us-east-1a/b/c) |
+| **Nodes** | 2× t3.small | 6× m5.2xlarge |
+| **NAT Gateway** | None (public subnets) | 1 per AZ |
+| **Database** | In-cluster PostgreSQL | Aurora Global DB |
+| **Storage** | EBS gp3 | EBS + EFS |
+| **DR** | None | Active-passive us-west-2 |
+| **Est. cost** | ~$60/2 weeks | ~$2,100/month |
+
+## Architecture (POC)
 
 ```
-VPC (10.0.0.0/16) — 3 Availability Zones
-├── EKS 1.30 (Terraform aws-eks module v20)
-│   ├── System NodeGroup  — On-Demand m5.large × 3
-│   ├── Tools NodeGroup   — On-Demand m5.2xlarge × 3
-│   └── Karpenter Pool    — Spot/On-Demand, auto-sized
-├── Add-ons: EBS CSI | EFS CSI | ALB Controller | Karpenter | KEDA
-└── GitOps: ArgoCD (App-of-Apps pattern)
+VPC (10.0.0.0/16) — Single AZ: us-east-1a
+└── Public Subnet (10.0.1.0/24)
+    └── EKS 1.30 (terraform-aws-modules/eks v20)
+        ├── 2× t3.small nodes (On-Demand)
+        └── Add-ons: EBS CSI | CoreDNS | kube-proxy | VPC-CNI
+            └── ArgoCD (App-of-Apps)
+                ├── Jenkins
+                ├── SonarQube Community
+                └── Harbor
 ```
 
-## What This Deploys
+## Quick Start (POC)
 
-| Layer | Resource | Details |
-|-------|----------|---------|
-| Network | VPC, 3 public + 3 private subnets | NAT GW per AZ for HA |
-| Compute | EKS 1.30 cluster | Managed node groups + Karpenter |
-| Storage | EBS gp3 StorageClass | EFS for shared workloads |
-| Ingress | AWS Load Balancer Controller | ALB with ACM TLS |
-| GitOps | ArgoCD | App-of-Apps bootstrap |
-| DR | Passive EKS in us-west-2 | Aurora Global DB, S3 CRR, EFS replication |
+### Prerequisites
+```bash
+# Install tools
+winget install Hashicorp.Terraform Amazon.AWSCLI GitHub.cli
 
-## Phase 0 Bootstrap (Run First)
+# Configure credentials
+aws configure        # enter your AWS keys
+gh auth login        # browser login
+```
 
+### Phase 0 — Bootstrap (run once)
 ```bash
 cd terraform/global
 cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars — set github_org to your GitHub username
-terraform init
-terraform plan
-terraform apply
+# Edit terraform.tfvars: set github_org = "srujantata"
+terraform init && terraform apply
 ```
 
-Creates: S3 state bucket, DynamoDB lock table, GitHub OIDC provider, GitHubActionsRole.
+### Deploy POC cluster
+```bash
+cd terraform/environments/poc
+# Edit main.tf: replace REPLACE_WITH_STATE_BUCKET with output from Phase 0
+terraform init && terraform plan && terraform apply
+aws eks update-kubeconfig --name devops-poc --region us-east-1
+kubectl get nodes   # should show 2 nodes
+```
+
+### Destroy when done (stop billing)
+```powershell
+# Windows
+$env:TF_STATE_BUCKET = "devops-tfstate-YOUR_ACCOUNT_ID"
+.\scripts\destroy-all.ps1
+```
+
+See [COST.md](COST.md) for full cost breakdown and billing alerts.
 
 ## Skills Demonstrated
 
-`Terraform` · `AWS EKS` · `Karpenter` · `ArgoCD` · `IRSA` · `GitOps` · `HA/DR` · `GitHub Actions` · `OIDC`
+`Terraform` · `AWS EKS` · `VPC networking` · `ArgoCD` · `IRSA` · `GitOps` · `GitHub Actions` · `OIDC` · `HA/DR architecture` · `Cost optimisation`
