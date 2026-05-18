@@ -197,6 +197,63 @@ ip-10-0-x-x.ec2.internal     Ready    <none>   2m    v1.30.x
 
 ---
 
+## Phase 2 — Actual Deployment Results
+
+**Date deployed:** 2026-05-18
+
+### Cluster Details
+| Field | Value |
+|-------|-------|
+| Cluster name | `devops-poc` |
+| Kubernetes version | 1.30 |
+| Region | us-east-1 |
+| Cluster endpoint | `https://3D6DF603FA21813ADA47B266178C114F.gr7.us-east-1.eks.amazonaws.com` |
+| VPC ID | `vpc-0555202bdcb47a294` |
+
+### Node Status
+| Node | AZ | Public IP | Version | Status |
+|------|----|-----------|---------|--------|
+| ip-10-0-1-140.ec2.internal | us-east-1a | 98.92.178.207 | v1.30.14-eks-7fcd7ec | Ready |
+| ip-10-0-2-129.ec2.internal | us-east-1b | 44.212.77.42 | v1.30.14-eks-7fcd7ec | Ready |
+
+### EKS Add-ons Active
+| Add-on | Status |
+|--------|--------|
+| coredns | ACTIVE |
+| kube-proxy | ACTIVE |
+| vpc-cni | ACTIVE |
+| aws-ebs-csi-driver | ACTIVE |
+
+### Storage
+- **StorageClass:** `ebs-gp3` (default, gp3, encrypted)
+
+### Configure kubectl
+```powershell
+aws eks update-kubeconfig --name devops-poc --region us-east-1
+```
+
+### Lessons Learned — Issues & Fixes
+
+**Issue 1: EKS requires 2 AZs minimum**
+- **Symptom:** `terraform apply` failed — EKS control plane rejected single-AZ VPC
+- **Fix:** Added a second subnet in `us-east-1b` to `terraform/environments/poc/main.tf`
+- **Lesson:** Always provision EKS subnets across at least 2 AZs, even for POC
+
+**Issue 2: Public subnets need `map_public_ip_on_launch = true`**
+- **Symptom:** Worker nodes launched without public IPs and could not reach the EKS API server
+- **Fix:** Set `map_public_ip_on_launch = true` in subnet resource, then patched existing subnets via AWS CLI:
+  ```powershell
+  aws ec2 modify-subnet-attribute --subnet-id <id> --map-public-ip-on-launch
+  ```
+- **Lesson:** Terraform doesn't auto-patch this on existing subnets — use AWS CLI for in-place fixes
+
+**Issue 3: EBS CSI driver needs `AmazonEBSCSIDriverPolicy` on the node IAM role**
+- **Symptom:** PersistentVolumeClaims stuck in `Pending`; `aws-ebs-csi-driver` pods crashlooping
+- **Fix:** Added `AmazonEBSCSIDriverPolicy` to `iam_role_additional_policies` in the EKS node group module
+- **Lesson:** EBS CSI is an EKS-managed add-on but still requires explicit IAM policy attachment on nodes
+
+---
+
 ## Phase 3 — DevOps Toolchain (ArgoCD + Helm)
 
 **What this deploys:** Jenkins, SonarQube, Harbor (POC tier — single replica, minimal resources)
@@ -309,4 +366,4 @@ kubectl get pods -n kube-system
 
 ---
 
-*Last updated: 2026-05-10 | Author: Srujan Tata | AWS Account: 296214942633*
+*Last updated: 2026-05-18 | Author: Srujan Tata | AWS Account: 296214942633*

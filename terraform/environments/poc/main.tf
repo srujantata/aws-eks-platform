@@ -16,7 +16,7 @@ terraform {
   }
 
   backend "s3" {
-    bucket         = "REPLACE_WITH_STATE_BUCKET"   # output from global/
+    bucket         = "devops-tfstate-296214942633"
     key            = "poc/terraform.tfstate"
     region         = "us-east-1"
     encrypt        = true
@@ -28,9 +28,23 @@ provider "aws" {
   region = "us-east-1"
 }
 
+# Kubernetes provider — authenticates via AWS EKS token (requires cluster to exist first)
+# Use: terraform apply -target=module.eks before full apply
+provider "kubernetes" {
+  host                   = try(module.eks.cluster_endpoint, "")
+  cluster_ca_certificate = try(base64decode(module.eks.cluster_certificate_authority_data), "")
+
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args        = ["eks", "get-token", "--cluster-name", local.cluster_name, "--region", "us-east-1"]
+  }
+}
+
 locals {
   cluster_name = "devops-poc"
-  az           = "us-east-1a"   # Single AZ — POC only
+  # EKS requires subnets in at least 2 AZs — use minimal 2-AZ spread
+  azs = ["us-east-1a", "us-east-1b"]
   tags = {
     Project     = "devops-platform"
     Environment = "poc"
@@ -41,7 +55,7 @@ locals {
 }
 
 # ─────────────────────────────────────────
-# VPC — Single AZ, public subnets only (no NAT Gateway = saves $32/month)
+# VPC — Two AZs (EKS requirement), public subnets only (no NAT Gateway = saves $32/month)
 # ─────────────────────────────────────────
 module "vpc" {
   source  = "terraform-aws-modules/vpc/aws"
@@ -50,8 +64,11 @@ module "vpc" {
   name = "${local.cluster_name}-vpc"
   cidr = "10.0.0.0/16"
 
-  azs            = [local.az]
-  public_subnets = ["10.0.1.0/24"]
+  azs            = local.azs
+  public_subnets = ["10.0.1.0/24", "10.0.2.0/24"]
+
+  # Auto-assign public IPs so nodes can reach internet without NAT
+  map_public_ip_on_launch = true
 
   # No private subnets, no NAT gateway — POC cost saving
   enable_nat_gateway = false
@@ -103,6 +120,11 @@ module "eks" {
 
       labels = {
         role = "poc-workload"
+      }
+
+      # EBS CSI driver requires EC2 permissions on the node role (POC — no IRSA needed)
+      iam_role_additional_policies = {
+        AmazonEBSCSIDriverPolicy = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
       }
     }
   }
