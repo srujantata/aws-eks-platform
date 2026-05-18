@@ -1,0 +1,312 @@
+# DevOps Platform — Full Execution Guide
+
+## Overview
+AI-driven prompt-to-infrastructure DevOps platform on AWS EKS. This guide covers every step from account creation to running toolchain to teardown.
+
+**Repos:**
+| Repo | Purpose |
+|------|---------|
+| [aws-eks-platform](https://github.com/srujantata/aws-eks-platform) | EKS cluster Terraform |
+| [infra-prompt-engine](https://github.com/srujantata/infra-prompt-engine) | Claude API → Terraform → GitHub PR |
+| [devops-toolchain-helm](https://github.com/srujantata/devops-toolchain-helm) | Helm + ArgoCD for Jenkins/Artifactory/SonarQube/Harbor |
+| [github-actions-iac](https://github.com/srujantata/github-actions-iac) | Reusable CI/CD workflows (OIDC) |
+| [dr-failover-runbook](https://github.com/srujantata/dr-failover-runbook) | Active-passive DR documentation |
+
+---
+
+## Prerequisites
+
+### 1. AWS Account
+- Create account at https://aws.amazon.com
+- Choose **Paid Plan** (required for EKS access)
+- New accounts get **$200 free credits** — POC costs ~$59, leaving $141 unused
+- Set billing alert at $20/month (Billing → Budgets → Create budget)
+
+### 2. IAM User (do NOT use root)
+```
+AWS Console → IAM → Users → Create user
+  Name: devops-admin
+  Permissions: AdministratorAccess (attach directly)
+  Access key: Application running outside AWS
+  → Download credentials.csv
+```
+
+### 3. Install Required Tools (Windows)
+
+**Option A — winget (recommended)**
+```powershell
+winget install --id Hashicorp.Terraform --accept-package-agreements --accept-source-agreements
+winget install --id Amazon.AWSCLI --accept-package-agreements --accept-source-agreements
+winget install --id GitHub.cli --accept-package-agreements --accept-source-agreements
+```
+
+**Option B — Chocolatey**
+```powershell
+choco install terraform awscli gh -y
+```
+
+**Verify installs** (open new PowerShell after install):
+```powershell
+terraform version   # should show >= 1.8
+aws --version       # should show >= 2.x
+gh --version        # should show >= 2.x
+git --version       # should show >= 2.x
+```
+
+> Note: After winget install, binaries may not be in PATH until a new terminal session is opened. If `terraform` is not found, use full path: `C:\Users\<USER>\AppData\Local\Microsoft\WinGet\Packages\Hashicorp.Terraform_Microsoft.Winget.Source_8wekyb3d8bbwe\terraform.exe`
+
+### 4. Configure AWS CLI
+```powershell
+aws configure
+# AWS Access Key ID:     (from credentials.csv)
+# AWS Secret Access Key: (from credentials.csv)
+# Default region:        us-east-1
+# Default output format: json
+```
+
+**Verify:**
+```powershell
+aws sts get-caller-identity
+# Expected output:
+# {
+#     "UserId": "AIDAUJ56JKOU6P3ET27YO",
+#     "Account": "296214942633",
+#     "Arn": "arn:aws:iam::296214942633:user/devops-admin"
+# }
+```
+
+### 5. Authenticate GitHub CLI
+```powershell
+gh auth login
+# Choose: GitHub.com → HTTPS → Login with a web browser
+# After login, add workflow scope:
+gh auth refresh -s workflow
+```
+
+**Verify:**
+```powershell
+gh auth status
+```
+
+### 6. Clone all repos
+```powershell
+Set-Location "D:\Srujan\Claude\devops"
+gh repo clone srujantata/aws-eks-platform
+gh repo clone srujantata/infra-prompt-engine
+gh repo clone srujantata/devops-toolchain-helm
+gh repo clone srujantata/github-actions-iac
+gh repo clone srujantata/dr-failover-runbook
+```
+
+---
+
+## Phase 0 — Bootstrap (Run Once)
+
+**What this creates:**
+- S3 bucket for Terraform remote state (`devops-tfstate-296214942633`)
+- DynamoDB table for state locking (`terraform-lock`)
+- GitHub OIDC provider in AWS IAM (keyless auth for GitHub Actions)
+- IAM role `GitHubActionsRole` (assumed by GitHub Actions via OIDC)
+
+**Run time:** ~2 minutes  
+**Cost:** ~$0.02/month (S3 + DynamoDB negligible)
+
+```powershell
+# 1. Enter global directory
+Set-Location "D:\Srujan\Claude\devops\aws-eks-platform\terraform\global"
+
+# 2. Create tfvars (gitignored — safe)
+@"
+primary_region = "us-east-1"
+dr_region      = "us-west-2"
+github_org     = "srujantata"
+"@ | Out-File -FilePath terraform.tfvars -Encoding utf8
+
+# 3. Init (local state — bootstrap is the chicken-and-egg exception)
+terraform init
+
+# 4. Preview changes
+terraform plan
+
+# 5. Apply
+terraform apply
+# Type: yes
+
+# 6. Save outputs (you'll need these for later steps)
+terraform output
+```
+
+**Expected outputs:**
+```
+state_bucket_name       = "devops-tfstate-296214942633"
+lock_table_name         = "terraform-lock"
+github_oidc_provider_arn = "arn:aws:iam::296214942633:oidc-provider/token.actions.githubusercontent.com"
+github_actions_role_arn  = "arn:aws:iam::296214942633:role/GitHubActionsRole"
+```
+
+### Add GitHub Actions Secrets (required for CI/CD)
+```
+GitHub → aws-eks-platform repo → Settings → Secrets → Actions → New secret
+
+Secret 1: AWS_ACCOUNT_ID    = 296214942633
+Secret 2: TF_STATE_BUCKET   = devops-tfstate-296214942633
+```
+
+---
+
+## Phase 2 — POC EKS Cluster
+
+**What this creates:**
+- VPC with public subnets (single AZ — us-east-1a, POC only)
+- EKS 1.30 cluster
+- 2× t3.small worker nodes (On-Demand)
+- EBS CSI driver (gp3 storage class)
+- AWS Load Balancer Controller
+
+**Run time:** ~15 minutes  
+**POC cost:** ~$4.30/day (~$59 for 14 days)
+
+```powershell
+Set-Location "D:\Srujan\Claude\devops\aws-eks-platform\terraform\environments\poc"
+
+# Init with remote state backend
+terraform init `
+  -backend-config="bucket=devops-tfstate-296214942633" `
+  -backend-config="key=poc/terraform.tfstate" `
+  -backend-config="region=us-east-1" `
+  -backend-config="dynamodb_table=terraform-lock"
+
+terraform plan
+terraform apply
+# Type: yes
+
+# Configure kubectl
+aws eks update-kubeconfig --name devops-poc --region us-east-1
+
+# Verify cluster
+kubectl get nodes
+kubectl get pods -A
+```
+
+**Expected output:**
+```
+NAME                          STATUS   ROLES    AGE   VERSION
+ip-10-0-x-x.ec2.internal     Ready    <none>   2m    v1.30.x
+ip-10-0-x-x.ec2.internal     Ready    <none>   2m    v1.30.x
+```
+
+---
+
+## Phase 3 — DevOps Toolchain (ArgoCD + Helm)
+
+**What this deploys:** Jenkins, SonarQube, Harbor (POC tier — single replica, minimal resources)
+
+```powershell
+# Install ArgoCD
+helm repo add argo https://argoproj.github.io/argo-helm
+helm repo update
+helm install argocd argo/argo-cd -n argocd --create-namespace --wait
+
+# Get ArgoCD initial admin password
+kubectl -n argocd get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+
+# Port-forward ArgoCD UI (open browser at http://localhost:8080)
+kubectl port-forward svc/argocd-server -n argocd 8080:443
+
+# Apply App-of-Apps (deploys all tools)
+kubectl apply -f argocd/bootstrap/app-of-apps.yaml
+
+# Watch sync progress
+kubectl get applications -n argocd -w
+```
+
+---
+
+## Phase 5 — Teardown (IMPORTANT — run before credits run out)
+
+**Always destroy in this order to avoid orphaned AWS resources (LBs, EBS volumes) that continue charging:**
+
+```powershell
+# Step 1 — Delete ArgoCD apps first (removes LBs and PVCs cleanly)
+kubectl delete applications --all -n argocd
+
+# Step 2 — Remove Helm releases
+helm uninstall argocd -n argocd
+helm uninstall aws-load-balancer-controller -n kube-system
+
+# Step 3 — Wait for LBs to fully delete (~2 min)
+aws elb describe-load-balancers --region us-east-1
+# Repeat until empty
+
+# Step 4 — Destroy EKS cluster
+Set-Location "D:\Srujan\Claude\devops\aws-eks-platform\terraform\environments\poc"
+terraform destroy
+# Type: yes
+# Takes ~10 minutes
+
+# Step 5 — Destroy bootstrap (optional — costs ~$0.02/month to keep)
+Set-Location "D:\Srujan\Claude\devops\aws-eks-platform\terraform\global"
+terraform destroy
+# Type: yes
+
+# Step 6 — Verify no running resources
+aws ec2 describe-instances --region us-east-1 --filters "Name=instance-state-name,Values=running" --query "Reservations[].Instances[].InstanceId"
+aws eks list-clusters --region us-east-1
+# Both should return empty
+```
+
+---
+
+## Cost Reference
+
+| Phase | Resources | Daily cost | 14-day cost |
+|-------|-----------|-----------|-------------|
+| POC EKS | 2× t3.small + EKS control plane | ~$4.30 | ~$60 |
+| Bootstrap only | S3 + DynamoDB | ~$0.001 | ~$0.01 |
+| **Total POC** | | **~$4.30/day** | **~$60** |
+| **AWS credits** | New account | — | **$200** |
+| **Out of pocket** | | | **$0** |
+
+> Production costs: ~$2,400/month (see COST.md)
+
+---
+
+## Billing Safety Checklist
+- [ ] Billing alert set at $20/month (AWS Billing → Budgets)
+- [ ] Destroy EKS before leaving POC running for >14 days
+- [ ] After destroy: verify `aws eks list-clusters` returns empty
+- [ ] After destroy: verify `aws ec2 describe-instances --filters "Name=instance-state-name,Values=running"` returns empty
+- [ ] Bootstrap (S3+DynamoDB) can stay — costs $0.01/month, holds your state
+
+---
+
+## Troubleshooting
+
+### terraform not found in PATH
+```powershell
+# Use full path
+$tf = (Get-ChildItem "$env:LOCALAPPDATA\Microsoft\WinGet\Packages\" -Filter "terraform.exe" -Recurse | Select -First 1).FullName
+& $tf version
+```
+
+### kubectl not configured
+```powershell
+aws eks update-kubeconfig --name devops-poc --region us-east-1
+kubectl get nodes
+```
+
+### GitHub Actions failing with "credentials"
+- Ensure `AWS_ACCOUNT_ID` and `TF_STATE_BUCKET` secrets are set in repo Settings → Secrets
+- OIDC role trust policy must include your repo: `repo:srujantata/*:*`
+- Role created by Phase 0 bootstrap — must run that first
+
+### EKS nodes NotReady
+```powershell
+kubectl describe nodes
+kubectl get pods -n kube-system
+# Check aws-node (VPC CNI) and coredns pods are Running
+```
+
+---
+
+*Last updated: 2026-05-10 | Author: Srujan Tata | AWS Account: 296214942633*
