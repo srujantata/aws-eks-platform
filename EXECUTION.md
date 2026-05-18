@@ -279,6 +279,62 @@ kubectl get applications -n argocd -w
 
 ---
 
+## Phase 3 — Actual Deployment Results
+*Deployed: 2026-05-18*
+
+### Node Upgrade: t3.small → t3.medium
+SonarQube 2026.x (Elasticsearch 8 + JVM) requires minimum 1.6 GB RAM.
+t3.small left only ~920 MB after system pods — OOMKill on every attempt.
+Upgraded to t3.medium (3.75 GB allocatable). Cost delta: +$1/day (~$14 for 2-week POC).
+
+| Node | Instance | RAM | AZ | Status |
+|------|----------|-----|----|--------|
+| ip-10-0-1-219.ec2.internal | t3.medium | 3.75 GB | us-east-1a | Ready |
+| ip-10-0-2-10.ec2.internal | t3.medium | 3.75 GB | us-east-1b | Ready |
+
+### Tools Deployed
+
+| Tool | Chart Version | Namespace | Status |
+|------|--------------|-----------|--------|
+| ArgoCD | argo-cd-9.5.14 (v3.4.2) | argocd | ✅ 7/7 pods Running |
+| Jenkins | jenkins-5.9.22 (2.552.x) | jenkins | ✅ 2/2 Running |
+| SonarQube | sonarqube-2026.2.x Community | sonarqube | ✅ 1/1 Running |
+
+### Access URLs & Credentials
+
+> ⚠️ These are ephemeral AWS ALB hostnames — they change on each `terraform destroy/apply` cycle.
+> In production use Route53 with a stable domain name.
+
+**ArgoCD** (GitOps dashboard)
+- URL: `http://a944fe58b20d24057b8cf0af7f586c3a-245014201.us-east-1.elb.amazonaws.com`
+- Username: `admin`
+- Password: `kubectl get secret -n argocd argocd-initial-admin-secret -o jsonpath='{.data.password}' | base64 -d`
+
+**Jenkins** (CI/CD)
+- URL: `http://a910314d11cee49a99b923e221108e05-468852420.us-east-1.elb.amazonaws.com:8080`
+- Username: `admin`
+- Password: `kubectl get secret jenkins -n jenkins -o jsonpath='{.data.jenkins-admin-password}' | base64 -d`
+
+**SonarQube** (Code quality)
+- URL: `http://a386f7224766d43d6b50aeee825abe34-1292105297.us-east-1.elb.amazonaws.com:9000`
+- Username: `admin`
+- Password: `admin` ← change on first login
+
+### Lessons Learned — Phase 3
+
+| # | Issue | Fix | Takeaway |
+|---|-------|-----|----------|
+| 1 | SonarQube OOMKill on t3.small | Upgraded to t3.medium | SonarQube needs 1.6 GB min (ES 8 + 2 JVMs) |
+| 2 | `edition=community` rejected | Use `community.enabled=true` | Chart API changed in 2026.x versions |
+| 3 | SonarQube needs monitoringPasscode | Added `--set monitoringPasscode=...` | Required in newer chart versions |
+
+### Helm Values in GitHub
+All POC values committed to [devops-toolchain-helm](https://github.com/srujantata/devops-toolchain-helm):
+- `charts/jenkins/values.yaml`
+- `charts/sonarqube/values.yaml`
+
+---
+
 ## Phase 5 — Teardown (IMPORTANT — run before credits run out)
 
 **Always destroy in this order to avoid orphaned AWS resources (LBs, EBS volumes) that continue charging:**
