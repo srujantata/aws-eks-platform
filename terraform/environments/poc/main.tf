@@ -109,7 +109,7 @@ module "eks" {
   # t3.small: 2 vCPU, 2GB RAM — enough for Jenkins + SonarQube + Harbor
   eks_managed_node_groups = {
     poc_nodes = {
-      instance_types = ["t3.small"]
+      instance_types = ["t3.medium"]   # upgraded from t3.small — SonarQube needs 1.6GB minimum
       min_size       = 2
       max_size       = 3         # Allow one extra for rolling updates
       desired_size   = 2
