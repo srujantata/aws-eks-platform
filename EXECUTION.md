@@ -335,6 +335,97 @@ All POC values committed to [devops-toolchain-helm](https://github.com/srujantat
 
 ---
 
+## Phase 3 Results — Harbor Container Registry
+*Deployed: 2026-05-18*
+
+### Deployment Details
+| Field | Value |
+|-------|-------|
+| Chart | harbor/harbor v1.19.0 (Harbor App 2.15.0) |
+| Namespace | harbor |
+| Commit | [260b2db](https://github.com/srujantata/devops-toolchain-helm/commit/260b2db) |
+
+### Access
+- **URL:** `http://a68756541aa5a454d81e6515e061e3c2-574233704.us-east-1.elb.amazonaws.com`
+- **Username:** `admin`
+- **Password:** `Harbor12345`
+
+> ⚠️ This is an ephemeral AWS ALB hostname — it changes on each `terraform destroy/apply` cycle.
+> For production, set `externalURL` in `charts/harbor/values.yaml` to a stable Route53 domain
+> (e.g. `https://harbor.yourdomain.com`) and configure TLS via cert-manager.
+
+### Pod Status
+| Pod | Status |
+|-----|--------|
+| harbor-core | Running |
+| harbor-database-0 | Running |
+| harbor-jobservice | Running |
+| harbor-nginx | Running |
+| harbor-portal | Running |
+| harbor-redis-0 | Running |
+| harbor-registry | Running |
+| harbor-trivy-0 | Running |
+
+All 8/8 pods Running. Trivy vulnerability scanning enabled.
+
+---
+
+## Phase 1 Results — Prompt Engine
+*Deployed: 2026-05-18*
+
+### Repository
+- **GitHub:** [srujantata/infra-prompt-engine](https://github.com/srujantata/infra-prompt-engine)
+- **Commit:** [a000cee](https://github.com/srujantata/infra-prompt-engine/commit/a000cee)
+
+### Files Delivered
+| File | Lines | Purpose |
+|------|-------|---------|
+| `generate.py` | 225 | Claude API → Terraform template generation |
+| `cli.py` | 54 | Command-line interface |
+| `server.py` | 78 | FastAPI REST server |
+| `tests/test_generate.py` | 80 | Unit tests |
+| `.github/workflows/ci.yml` | — | CI pipeline |
+| `README.md` | — | Usage documentation |
+
+### API Endpoints
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/generate` | Generate Terraform from a natural-language prompt |
+| POST | `/generate/dry-run` | Preview generated code without writing files |
+| GET | `/health` | Health check |
+
+### How to Run
+```bash
+# Install dependencies
+pip install -r requirements.txt
+
+# CLI — dry run (no files written)
+python -m prompt_engine.cli "create an S3 bucket" --dry-run
+
+# CLI — generate and write Terraform
+python -m prompt_engine.cli "create an EKS cluster in us-east-1"
+
+# Start the REST server
+python -m prompt_engine.server
+# POST http://localhost:8000/generate  {"prompt": "create an S3 bucket"}
+```
+
+---
+
+## Platform Status
+
+| Tool | URL | Credentials | Status |
+|------|-----|-------------|--------|
+| ArgoCD | `http://a944fe58b20d24057b8cf0af7f586c3a-245014201.us-east-1.elb.amazonaws.com` | admin / (see kubectl cmd) | LIVE |
+| Jenkins | `http://a910314d11cee49a99b923e221108e05-468852420.us-east-1.elb.amazonaws.com:8080` | admin / (see kubectl cmd) | LIVE |
+| SonarQube | `http://a386f7224766d43d6b50aeee825abe34-1292105297.us-east-1.elb.amazonaws.com:9000` | admin / admin | LIVE |
+| Harbor | `http://a68756541aa5a454d81e6515e061e3c2-574233704.us-east-1.elb.amazonaws.com` | admin / Harbor12345 | LIVE |
+| Prompt Engine | https://github.com/srujantata/infra-prompt-engine | — | LIVE (local/CI) |
+
+> All URLs are ephemeral AWS ALB hostnames. Use Route53 for stable production domains.
+
+---
+
 ## Phase 5 — Teardown (IMPORTANT — run before credits run out)
 
 **Always destroy in this order to avoid orphaned AWS resources (LBs, EBS volumes) that continue charging:**
@@ -422,4 +513,4 @@ kubectl get pods -n kube-system
 
 ---
 
-*Last updated: 2026-05-18 | Author: Srujan Tata | AWS Account: 296214942633*
+*Last updated: 2026-05-18 (Harbor + Prompt Engine results added) | Author: Srujan Tata | AWS Account: 296214942633*
