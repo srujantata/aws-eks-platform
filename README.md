@@ -71,6 +71,53 @@ $env:TF_STATE_BUCKET = "devops-tfstate-YOUR_ACCOUNT_ID"
 
 See [COST.md](COST.md) for full cost breakdown and billing alerts.
 
+## AI Administration Layer
+
+The cluster is administered through natural language via the [infra-prompt-engine](https://github.com/srujantata/infra-prompt-engine).
+
+### What it does
+
+| Capability | API | Example |
+|------------|-----|---------|
+| Terraform generation | `POST /generate` | "Create a VPC with 3 AZs and NAT gateway" → opens GitHub PR |
+| kubectl natural language | `POST /kubectl` | "scale Jenkins to 3 replicas" → translates + optionally executes |
+| Dry-run preview | `POST /generate/dry-run` | Returns generated HCL without writing files or opening a PR |
+
+### Chat UI
+
+A single-file Progressive Web App (PWA) ships with the prompt engine at `chat_ui/index.html`:
+
+- Dark theme with sidebar showing live cluster health, ArgoCD/Jenkins/SonarQube/Harbor quick-links
+- Chat bubbles with syntax-highlighted kubectl commands and collapsible execution results
+- Execute toggle (off by default — safe translate-only mode); red warning banner when execute is on
+- Installable on phone via "Add to Home Screen" — works on the same WiFi as your PC
+
+**Start the chat UI:**
+```powershell
+cd D:\Srujan\Claude\devops\infra-prompt-engine
+uvicorn prompt_engine.server:app --host 0.0.0.0 --port 8000
+python -m http.server 3000 --directory chat_ui
+# Open http://localhost:3000
+```
+
+### Local AI (Ollama — zero API cost)
+
+Swap the Anthropic backend for a locally-running `codellama:34b` on your RTX 4090 — all inference stays on-machine, no API calls, $0/month after setup.
+
+Full setup guide: [infra-prompt-engine/LOCAL_AI_SETUP.md](https://github.com/srujantata/infra-prompt-engine/blob/master/LOCAL_AI_SETUP.md)
+
+```powershell
+[System.Environment]::SetEnvironmentVariable("INFRA_AI_BACKEND","ollama","User")
+[System.Environment]::SetEnvironmentVariable("INFRA_AI_MODEL","codellama:34b","User")
+[System.Environment]::SetEnvironmentVariable("INFRA_AI_BASE_URL","http://localhost:11434","User")
+```
+
+### Roadmap
+
+The prompt engine is Phase 1 of a planned autonomous DevOps platform — self-healing loops, AI-driven CVE patching, Prometheus alert responder, cost analyser, and DR activation via conversation. See [infra-prompt-engine/ROADMAP.md](https://github.com/srujantata/infra-prompt-engine/blob/master/ROADMAP.md) for the full 7-phase vision.
+
+---
+
 ## Skills Demonstrated
 
-`Terraform` · `AWS EKS` · `VPC networking` · `ArgoCD` · `IRSA` · `GitOps` · `GitHub Actions` · `OIDC` · `HA/DR architecture` · `Cost optimisation`
+`Terraform` · `AWS EKS` · `VPC networking` · `ArgoCD` · `IRSA` · `GitOps` · `GitHub Actions` · `OIDC` · `HA/DR architecture` · `Cost optimisation` · `Claude API` · `kubectl natural language` · `PWA`
